@@ -80,11 +80,20 @@ type ProvidersConfig struct {
 	Zhipu      ProviderConfig `json:"zhipu"`
 	VLLM       ProviderConfig `json:"vllm"`
 	Gemini     ProviderConfig `json:"gemini"`
+	Ollama     OllamaConfig   `json:"ollama"`
 }
 
 type ProviderConfig struct {
 	APIKey  string `json:"api_key" env:"PICOCLAW_PROVIDERS_{{.Name}}_API_KEY"`
 	APIBase string `json:"api_base" env:"PICOCLAW_PROVIDERS_{{.Name}}_API_BASE"`
+}
+
+type OllamaConfig struct {
+	Enabled     bool   `json:"enabled" env:"PICOCLAW_PROVIDERS_OLLAMA_ENABLED"`
+	Mode        string `json:"mode" env:"PICOCLAW_PROVIDERS_OLLAMA_MODE"` // "http" or "local"
+	APIBase     string `json:"api_base" env:"PICOCLAW_PROVIDERS_OLLAMA_API_BASE"`
+	ModelPath   string `json:"model_path" env:"PICOCLAW_PROVIDERS_OLLAMA_MODEL_PATH"`
+	ContextSize int    `json:"context_size" env:"PICOCLAW_PROVIDERS_OLLAMA_CONTEXT_SIZE"`
 }
 
 type GatewayConfig struct {
@@ -155,6 +164,13 @@ func DefaultConfig() *Config {
 			Zhipu:      ProviderConfig{},
 			VLLM:       ProviderConfig{},
 			Gemini:     ProviderConfig{},
+			Ollama: OllamaConfig{
+				Enabled:     false,
+				Mode:        "http",
+				APIBase:     "http://localhost:11434/api",
+				ModelPath:   "",
+				ContextSize: 2048,
+			},
 		},
 		Gateway: GatewayConfig{
 			Host: "0.0.0.0",

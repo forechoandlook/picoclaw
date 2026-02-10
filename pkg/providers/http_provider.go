@@ -216,6 +216,9 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 			apiBase = "https://api.groq.com/openai/v1"
 		}
 
+	case cfg.Providers.Ollama.Enabled && (strings.HasPrefix(model, "ollama/") || (!strings.Contains(model, "/") && cfg.Providers.Ollama.Mode == "local")):
+		return NewOllamaProvider(cfg.Providers.Ollama)
+
 	case cfg.Providers.VLLM.APIBase != "":
 		apiKey = cfg.Providers.VLLM.APIKey
 		apiBase = cfg.Providers.VLLM.APIBase
