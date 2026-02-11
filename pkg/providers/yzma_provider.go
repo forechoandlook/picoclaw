@@ -4,17 +4,25 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/hybridgroup/yzma/pkg/llama"
 	"github.com/sipeed/picoclaw/pkg/config"
 )
 
+type activeModel struct {
+	name        string
+	model       llama.Model
+	vocab       llama.Vocab
+	contextSize int
+}
+
 type YzmaProvider struct {
-	config config.YzmaConfig
-	model  llama.Model
-	vocab  llama.Vocab
-	mu     sync.Mutex
+	config      config.YzmaConfig
+	active      *activeModel
+	mu          sync.Mutex
+	defaultName string
 }
 
 func NewYzmaProvider(cfg config.YzmaConfig) (*YzmaProvider, error) {
@@ -24,7 +32,6 @@ func NewYzmaProvider(cfg config.YzmaConfig) (*YzmaProvider, error) {
 		}
 	} else {
 		// Try to load with default lookup
-		// Ignore error as it might be already loaded or linked
 		_ = llama.Load("")
 	}
 
@@ -32,50 +39,132 @@ func NewYzmaProvider(cfg config.YzmaConfig) (*YzmaProvider, error) {
 	llama.LogSet(llama.LogSilent())
 	llama.Init()
 
+	defaultName := "default"
+	if cfg.ModelPath != "" {
+		defaultName = filepath.Base(cfg.ModelPath)
+	} else if len(cfg.Models) > 0 {
+		for name := range cfg.Models {
+			defaultName = name
+			break
+		}
+	}
+
+	return &YzmaProvider{
+		config:      cfg,
+		defaultName: defaultName,
+	}, nil
+}
+
+func (p *YzmaProvider) loadModel(name string) (*activeModel, error) {
+	// Resolve model path and config
+	var modelPath string
+	var contextSize int
+	var gpuLayers int
+
+	// Normalize name
+	cleanName := strings.TrimPrefix(name, "yzma/")
+
+	if mConfig, ok := p.config.Models[cleanName]; ok {
+		modelPath = mConfig.Path
+		contextSize = mConfig.ContextSize
+		gpuLayers = mConfig.GpuLayers
+	} else if cleanName == "default" || cleanName == "" || (p.config.ModelPath != "" && cleanName == filepath.Base(p.config.ModelPath)) {
+		// Fallback to default config
+		modelPath = p.config.ModelPath
+		contextSize = p.config.ContextSize
+		gpuLayers = p.config.GpuLayers
+	} else {
+		return nil, fmt.Errorf("model not found: %s", name)
+	}
+
+	if modelPath == "" {
+		return nil, fmt.Errorf("model path not configured for %s", name)
+	}
+
+	if contextSize == 0 {
+		contextSize = p.config.ContextSize
+		if contextSize == 0 {
+			contextSize = 4096
+		}
+	}
+	if gpuLayers == 0 {
+		gpuLayers = p.config.GpuLayers
+		if gpuLayers == 0 {
+			gpuLayers = -1
+		}
+	}
+
 	mParams := llama.ModelDefaultParams()
-	if cfg.GpuLayers > 0 {
-		mParams.NGpuLayers = int32(cfg.GpuLayers)
-	} else if cfg.GpuLayers == -1 {
-		// -1 usually means all layers in some bindings, but let's check llama.cpp
-		// set to a high number to offload all
+	if gpuLayers > 0 {
+		mParams.NGpuLayers = int32(gpuLayers)
+	} else if gpuLayers == -1 {
 		mParams.NGpuLayers = 999
 	}
 
-	model, err := llama.ModelLoadFromFile(cfg.ModelPath, mParams)
+	model, err := llama.ModelLoadFromFile(modelPath, mParams)
 	if err != nil {
-		return nil, fmt.Errorf("unable to load model from %s: %w", cfg.ModelPath, err)
+		return nil, fmt.Errorf("unable to load model from %s: %w", modelPath, err)
 	}
 
 	vocab := llama.ModelGetVocab(model)
 
-	return &YzmaProvider{
-		config: cfg,
-		model:  model,
-		vocab:  vocab,
+	return &activeModel{
+		name:        name,
+		model:       model,
+		vocab:       vocab,
+		contextSize: contextSize,
 	}, nil
 }
 
-func (p *YzmaProvider) Chat(ctx context.Context, messages []Message, tools []ToolDefinition, model string, options map[string]interface{}) (*LLMResponse, error) {
+func (p *YzmaProvider) unloadActive() {
+	if p.active != nil {
+		if p.active.model != 0 {
+			llama.ModelFree(p.active.model)
+		}
+		p.active = nil
+	}
+}
+
+func (p *YzmaProvider) Chat(ctx context.Context, messages []Message, tools []ToolDefinition, modelName string, options map[string]interface{}) (*LLMResponse, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// Initialize context for this chat session
-	ctxParams := llama.ContextDefaultParams()
-	if p.config.ContextSize > 0 {
-		ctxParams.NCtx = uint32(p.config.ContextSize)
-	} else {
-		ctxParams.NCtx = 4096 // Default
+	targetModel := modelName
+	if targetModel == "" {
+		targetModel = p.defaultName
 	}
-	// Set batch size for context processing
+
+	if strings.HasPrefix(targetModel, "yzma/") {
+		targetModel = strings.TrimPrefix(targetModel, "yzma/")
+	}
+
+	// Switch model if needed
+	if p.active == nil || (p.active.name != targetModel && targetModel != "default") {
+		// Unload current
+		p.unloadActive()
+
+		// Load new
+		newModel, err := p.loadModel(targetModel)
+		if err != nil {
+			return nil, err
+		}
+		p.active = newModel
+	}
+
+	am := p.active
+
+	// Initialize context
+	ctxParams := llama.ContextDefaultParams()
+	ctxParams.NCtx = uint32(am.contextSize)
 	ctxParams.NBatch = 512
 
-	lctx, err := llama.InitFromModel(p.model, ctxParams)
+	lctx, err := llama.InitFromModel(am.model, ctxParams)
 	if err != nil {
 		return nil, fmt.Errorf("unable to initialize context: %w", err)
 	}
 	defer llama.Free(lctx)
 
-	// Initialize sampler with default chain
+	// Initialize sampler
 	sp := llama.DefaultSamplerParams()
 	samplers := []llama.SamplerType{
 		llama.SamplerTypeTopK,
@@ -83,7 +172,7 @@ func (p *YzmaProvider) Chat(ctx context.Context, messages []Message, tools []Too
 		llama.SamplerTypeMinP,
 		llama.SamplerTypeTemperature,
 	}
-	sampler := llama.NewSampler(p.model, samplers, sp)
+	sampler := llama.NewSampler(am.model, samplers, sp)
 
 	// Convert messages
 	chatMsgs := make([]llama.ChatMessage, 0, len(messages))
@@ -91,18 +180,19 @@ func (p *YzmaProvider) Chat(ctx context.Context, messages []Message, tools []Too
 		chatMsgs = append(chatMsgs, llama.NewChatMessage(m.Role, m.Content))
 	}
 
-	// Determine template
-	tmpl := llama.ModelChatTemplate(p.model, "")
+	// Template
+	tmpl := llama.ModelChatTemplate(am.model, "")
 	if tmpl == "" {
-		tmpl = "chatml" // fallback
+		tmpl = "chatml"
 	}
 
 	// Apply template
-	bufSize := p.config.ContextSize * 4
+	bufSize := am.contextSize * 4
 	if bufSize == 0 {
 		bufSize = 16384
 	}
 	buf := make([]byte, bufSize)
+
 	reqLen := llama.ChatApplyTemplate(tmpl, chatMsgs, true, buf)
 
 	if reqLen > int32(len(buf)) {
@@ -117,9 +207,9 @@ func (p *YzmaProvider) Chat(ctx context.Context, messages []Message, tools []Too
 	prompt := string(buf[:reqLen])
 
 	// Tokenize
-	tokens := llama.Tokenize(p.vocab, prompt, true, true)
+	tokens := llama.Tokenize(am.vocab, prompt, true, true)
 
-	// Evaluate prompt in batches
+	// Decode Loop
 	nBatch := int32(512)
 	batch := llama.BatchInit(nBatch, 0, 1)
 	defer llama.BatchFree(batch)
@@ -137,7 +227,6 @@ func (p *YzmaProvider) Chat(ctx context.Context, messages []Message, tools []Too
 		for j := 0; j < int(chunkLen); j++ {
 			pos := int32(i + j)
 			logits := false
-			// We need logits for the last token of the prompt to start generation
 			if i+j == len(tokens)-1 {
 				logits = true
 			}
@@ -164,20 +253,17 @@ func (p *YzmaProvider) Chat(ctx context.Context, messages []Message, tools []Too
 	currPos := int32(len(tokens))
 
 	for i := 0; i < maxTokens; i++ {
-		// Sample next token
 		token := llama.SamplerSample(sampler, lctx, -1)
 
-		if llama.VocabIsEOG(p.vocab, token) {
+		if llama.VocabIsEOG(am.vocab, token) {
 			break
 		}
 
-		// Decode token to string
 		pieceBuf := make([]byte, 256)
-		l := llama.TokenToPiece(p.vocab, token, pieceBuf, 0, false)
+		l := llama.TokenToPiece(am.vocab, token, pieceBuf, 0, false)
 		text := string(pieceBuf[:l])
 		generatedContent += text
 
-		// Prepare next batch with single token
 		batch.Clear()
 		batch.Add(token, llama.Pos(currPos), []llama.SeqId{0}, true)
 		currPos++
@@ -207,5 +293,5 @@ func (p *YzmaProvider) Chat(ctx context.Context, messages []Message, tools []Too
 }
 
 func (p *YzmaProvider) GetDefaultModel() string {
-	return filepath.Base(p.config.ModelPath)
+	return p.defaultName
 }

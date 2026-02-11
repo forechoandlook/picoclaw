@@ -97,12 +97,19 @@ type OllamaConfig struct {
 	ContextSize int    `json:"context_size" env:"PICOCLAW_PROVIDERS_OLLAMA_CONTEXT_SIZE"`
 }
 
+type YzmaModelConfig struct {
+	Path        string `json:"path"`
+	ContextSize int    `json:"context_size"`
+	GpuLayers   int    `json:"gpu_layers"`
+}
+
 type YzmaConfig struct {
-	Enabled     bool   `json:"enabled" env:"PICOCLAW_PROVIDERS_YZMA_ENABLED"`
-	ModelPath   string `json:"model_path" env:"PICOCLAW_PROVIDERS_YZMA_MODEL_PATH"`
-	LibPath     string `json:"lib_path" env:"PICOCLAW_PROVIDERS_YZMA_LIB_PATH"`
-	ContextSize int    `json:"context_size" env:"PICOCLAW_PROVIDERS_YZMA_CONTEXT_SIZE"`
-	GpuLayers   int    `json:"gpu_layers" env:"PICOCLAW_PROVIDERS_YZMA_GPU_LAYERS"`
+	Enabled     bool                       `json:"enabled" env:"PICOCLAW_PROVIDERS_YZMA_ENABLED"`
+	ModelPath   string                     `json:"model_path" env:"PICOCLAW_PROVIDERS_YZMA_MODEL_PATH"` // Default/Single model fallback
+	LibPath     string                     `json:"lib_path" env:"PICOCLAW_PROVIDERS_YZMA_LIB_PATH"`
+	ContextSize int                        `json:"context_size" env:"PICOCLAW_PROVIDERS_YZMA_CONTEXT_SIZE"` // Default context size
+	GpuLayers   int                        `json:"gpu_layers" env:"PICOCLAW_PROVIDERS_YZMA_GPU_LAYERS"`     // Default GPU layers
+	Models      map[string]YzmaModelConfig `json:"models"`                                                  // Map of model name to config
 }
 
 type GatewayConfig struct {
