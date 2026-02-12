@@ -81,6 +81,7 @@ type ProvidersConfig struct {
 	VLLM       ProviderConfig `json:"vllm"`
 	Gemini     ProviderConfig `json:"gemini"`
 	Ollama     OllamaConfig   `json:"ollama"`
+	Yzma       YzmaConfig     `json:"yzma"`
 }
 
 type ProviderConfig struct {
@@ -94,6 +95,21 @@ type OllamaConfig struct {
 	APIBase     string `json:"api_base" env:"PICOCLAW_PROVIDERS_OLLAMA_API_BASE"`
 	ModelPath   string `json:"model_path" env:"PICOCLAW_PROVIDERS_OLLAMA_MODEL_PATH"`
 	ContextSize int    `json:"context_size" env:"PICOCLAW_PROVIDERS_OLLAMA_CONTEXT_SIZE"`
+}
+
+type YzmaModelConfig struct {
+	Path        string `json:"path"`
+	ContextSize int    `json:"context_size"`
+	GpuLayers   int    `json:"gpu_layers"`
+}
+
+type YzmaConfig struct {
+	Enabled     bool                       `json:"enabled" env:"PICOCLAW_PROVIDERS_YZMA_ENABLED"`
+	ModelPath   string                     `json:"model_path" env:"PICOCLAW_PROVIDERS_YZMA_MODEL_PATH"` // Default/Single model fallback
+	LibPath     string                     `json:"lib_path" env:"PICOCLAW_PROVIDERS_YZMA_LIB_PATH"`
+	ContextSize int                        `json:"context_size" env:"PICOCLAW_PROVIDERS_YZMA_CONTEXT_SIZE"` // Default context size
+	GpuLayers   int                        `json:"gpu_layers" env:"PICOCLAW_PROVIDERS_YZMA_GPU_LAYERS"`     // Default GPU layers
+	Models      map[string]YzmaModelConfig `json:"models"`                                                  // Map of model name to config
 }
 
 type GatewayConfig struct {
@@ -170,6 +186,13 @@ func DefaultConfig() *Config {
 				APIBase:     "http://localhost:11434/api",
 				ModelPath:   "",
 				ContextSize: 2048,
+			},
+			Yzma: YzmaConfig{
+				Enabled:     false,
+				ModelPath:   "",
+				LibPath:     "",
+				ContextSize: 4096,
+				GpuLayers:   -1,
 			},
 		},
 		Gateway: GatewayConfig{

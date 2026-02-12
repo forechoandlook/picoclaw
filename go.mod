@@ -1,6 +1,6 @@
 module github.com/sipeed/picoclaw
 
-go 1.24.0
+go 1.24.4
 
 require (
 	github.com/bwmarrin/discordgo v0.29.0
@@ -8,11 +8,14 @@ require (
 	github.com/chzyer/readline v1.5.1
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/gorilla/websocket v1.5.3
+	github.com/hybridgroup/yzma v1.7.0
 	github.com/larksuite/oapi-sdk-go/v3 v3.5.3
 )
 
 require (
+	github.com/ebitengine/purego v0.9.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
+	github.com/jupiterrider/ffi v0.5.1 // indirect
 	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 )
